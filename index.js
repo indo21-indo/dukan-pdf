@@ -1,9 +1,12 @@
 const express = require("express");
 const PDFDocument = require("pdfkit");
+const cors = require("cors");
 const axios = require("axios");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+app.use(cors());
 
 app.get("/api/memo", async (req, res) => {
   try {
@@ -12,46 +15,46 @@ app.get("/api/memo", async (req, res) => {
       return res.status(400).json({ error: "No items provided" });
     }
 
+    // Parse items from query string
     const items = itemsParam.split(",").map((itemStr) => {
       const [name, qty, price] = itemStr.split(":");
-      return { name, quantity: parseInt(qty), price: parseFloat(price) };
+      return {
+        name,
+        quantity: parseInt(qty),
+        price: parseFloat(price),
+      };
     });
 
+    // Create PDF document in memory
     const doc = new PDFDocument();
     let buffers = [];
-    doc.on("data", buffers.push.bind(buffers));
-
+    doc.on("data", (chunk) => buffers.push(chunk));
     doc.on("end", async () => {
-      try {
-        const pdfBuffer = Buffer.concat(buffers);
+      const pdfBuffer = Buffer.concat(buffers);
 
-        // Upload to transfer.sh
-        const fileName = `memo_${Date.now()}.pdf`;
-        const uploadRes = await axios.put(
-          `https://transfer.sh/${fileName}`,
+      try {
+        // Upload PDF to transfer.sh using PUT request
+        const filename = `memo_${Date.now()}.pdf`;
+        const uploadResponse = await axios.put(
+          `https://transfer.sh/${filename}`,
           pdfBuffer,
           {
             headers: {
               "Content-Type": "application/pdf",
             },
-            maxContentLength: Infinity,
-            maxBodyLength: Infinity,
+            maxBodyLength: Infinity, // large file support
           }
         );
 
-        if (uploadRes.status !== 200) {
-          return res.status(500).json({ error: "Failed to upload PDF" });
-        }
-
-        const pdfUrl = uploadRes.data;
-        res.json({ pdfUrl });
+        // Return uploaded file URL to client
+        res.json({ pdfUrl: uploadResponse.data });
       } catch (uploadError) {
-        console.error("Upload error:", uploadError);
+        console.error("Upload failed:", uploadError.response?.data || uploadError.message);
         res.status(500).json({ error: "Upload failed" });
       }
     });
 
-    // Build PDF
+    // Build PDF content
     doc.fontSize(18).text("Invoice", { align: "center" });
     const formattedDate = new Date().toLocaleString("en-US", {
       day: "numeric",
@@ -71,6 +74,7 @@ app.get("/api/memo", async (req, res) => {
     items.forEach(({ name, quantity, price }) => {
       const total = quantity * price;
       grandTotal += total;
+
       const namePad = name.padEnd(16);
       const qtyPad = String(quantity).padEnd(6);
       const pricePad = price.toFixed(2).padEnd(8);
@@ -83,8 +87,8 @@ app.get("/api/memo", async (req, res) => {
     doc.fontSize(14).text("Thanks for shopping!", { align: "center" });
 
     doc.end();
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ error: "Server error" });
   }
 });
