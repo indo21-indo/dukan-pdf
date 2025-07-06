@@ -1,13 +1,11 @@
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
 const PDFDocument = require("pdfkit");
 const cors = require("cors");
 const axios = require("axios");
 const FormData = require("form-data");
 
 const app = express();
-const PORT = process.env.PORT || 5000; // ✅ Corrected here
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
@@ -19,36 +17,59 @@ app.get("/api/memo", async (req, res) => {
       return res.status(400).json({ error: "No items provided" });
     }
 
+    // Parse items query param (format: name:qty:price,name:qty:price,...)
     const items = itemsParam.split(",").map((itemStr) => {
       const [name, qty, price] = itemStr.split(":");
       return { name, quantity: parseInt(qty), price: parseFloat(price) };
     });
 
+    // Create PDF in memory buffer
     const doc = new PDFDocument();
     let buffers = [];
     doc.on("data", buffers.push.bind(buffers));
     doc.on("end", async () => {
-      const pdfBuffer = Buffer.concat(buffers);
+      try {
+        const pdfBuffer = Buffer.concat(buffers);
 
-      const form = new FormData();
-      form.append("file", pdfBuffer, {
-        filename: `memo_${Date.now()}.pdf`,
-        contentType: "application/pdf",
-      });
+        // Step 1: Get the best upload server from GoFile
+        const serverRes = await axios.get("https://api.gofile.io/getServer");
+        const server = serverRes.data.data.server;
 
-      const uploadRes = await axios.post("https://api.gofile.io/uploadFile", form, {
-        headers: form.getHeaders(),
-      });
+        // Step 2: Prepare form data for upload
+        const form = new FormData();
+        form.append("file", pdfBuffer, {
+          filename: `memo_${Date.now()}.pdf`,
+          contentType: "application/pdf",
+        });
 
-      if (uploadRes.data.status !== "ok") {
-        return res.status(500).json({ error: "Failed to upload PDF to GoFile" });
+        // Step 3: Upload PDF to GoFile server
+        const uploadRes = await axios.post(
+          `https://${server}.gofile.io/uploadFile`,
+          form,
+          {
+            headers: form.getHeaders(),
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity,
+          }
+        );
+
+        if (uploadRes.data.status !== "ok") {
+          return res.status(500).json({ error: "Failed to upload PDF to GoFile" });
+        }
+
+        const pdfUrl = uploadRes.data.data.downloadPage;
+
+        // Send back PDF URL
+        res.json({ pdfUrl });
+      } catch (uploadErr) {
+        console.error("Upload error:", uploadErr);
+        res.status(500).json({ error: "Upload failed" });
       }
-
-      const pdfUrl = uploadRes.data.data.downloadPage;
-      res.json({ pdfUrl });
     });
 
+    // Build PDF content
     doc.fontSize(18).text("Invoice", { align: "center" });
+
     const formattedDate = new Date().toLocaleString("en-US", {
       day: "numeric",
       month: "long",
@@ -57,6 +78,7 @@ app.get("/api/memo", async (req, res) => {
       minute: "numeric",
       hour12: true,
     });
+
     doc.fontSize(12).text(`Date: ${formattedDate}`, { align: "center" });
     doc.moveDown();
 
@@ -77,6 +99,7 @@ app.get("/api/memo", async (req, res) => {
     doc.text("----------------------------------------");
     doc.text(`Total: ${grandTotal.toFixed(2)}`, { align: "right" });
     doc.moveDown();
+
     doc.fontSize(14).text("Thanks for shopping!", { align: "center" });
 
     doc.end();
@@ -87,5 +110,5 @@ app.get("/api/memo", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
