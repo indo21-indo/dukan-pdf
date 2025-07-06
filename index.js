@@ -7,34 +7,29 @@ const axios = require("axios");
 const FormData = require("form-data");
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000; // ✅ Corrected here
 
 app.use(cors());
 app.use(express.json());
 
 app.get("/api/memo", async (req, res) => {
   try {
-    // Query param: items=Pen:2:10,Book:1:50
     const itemsParam = req.query.items;
     if (!itemsParam) {
       return res.status(400).json({ error: "No items provided" });
     }
 
-    // Parse items
-    // format: name:qty:price,name:qty:price,...
     const items = itemsParam.split(",").map((itemStr) => {
       const [name, qty, price] = itemStr.split(":");
       return { name, quantity: parseInt(qty), price: parseFloat(price) };
     });
 
-    // Create PDF buffer instead of file
     const doc = new PDFDocument();
     let buffers = [];
     doc.on("data", buffers.push.bind(buffers));
     doc.on("end", async () => {
       const pdfBuffer = Buffer.concat(buffers);
 
-      // Upload to GoFile
       const form = new FormData();
       form.append("file", pdfBuffer, {
         filename: `memo_${Date.now()}.pdf`,
@@ -50,12 +45,9 @@ app.get("/api/memo", async (req, res) => {
       }
 
       const pdfUrl = uploadRes.data.data.downloadPage;
-
-      // Send PDF public URL to client
       res.json({ pdfUrl });
     });
 
-    // Build PDF content
     doc.fontSize(18).text("Invoice", { align: "center" });
     const formattedDate = new Date().toLocaleString("en-US", {
       day: "numeric",
@@ -76,7 +68,6 @@ app.get("/api/memo", async (req, res) => {
       const total = quantity * price;
       grandTotal += total;
 
-      // Padding to align (simple)
       const namePad = name.padEnd(16);
       const qtyPad = String(quantity).padEnd(6);
       const pricePad = price.toFixed(2).padEnd(8);
