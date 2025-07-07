@@ -1,21 +1,36 @@
 const express = require("express");
+const path = require("path");
 const PDFDocument = require("pdfkit");
 const cors = require("cors");
 const axios = require("axios");
+const FormData = require("form-data");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
+app.use(express.json());
 
-app.get("/api/memo", async (req, res) => {
+// Serve frontend files from public folder
+app.use(express.static(path.join(__dirname, "public")));
+
+// Root route to serve index.html
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// API endpoint to generate memo PDF
+app.get("/api/generate-memo", async (req, res) => {
   try {
+    // items query param format: name:qty:price,name:qty:price,...
     const itemsParam = req.query.items;
+    const paidParam = req.query.paid || "0";
+
     if (!itemsParam) {
       return res.status(400).json({ error: "No items provided" });
     }
 
-    // Parse items from query string
+    // Parse items
     const items = itemsParam.split(",").map((itemStr) => {
       const [name, qty, price] = itemStr.split(":");
       return {
@@ -28,29 +43,31 @@ app.get("/api/memo", async (req, res) => {
     // Create PDF document in memory
     const doc = new PDFDocument();
     let buffers = [];
-    doc.on("data", (chunk) => buffers.push(chunk));
+    doc.on("data", buffers.push.bind(buffers));
     doc.on("end", async () => {
       const pdfBuffer = Buffer.concat(buffers);
 
-      try {
-        // Upload PDF to transfer.sh using PUT request
-        const filename = `memo_${Date.now()}.pdf`;
-        const uploadResponse = await axios.put(
-          `https://transfer.sh/${filename}`,
-          pdfBuffer,
-          {
-            headers: {
-              "Content-Type": "application/pdf",
-            },
-            maxBodyLength: Infinity, // large file support
-          }
-        );
+      // Upload to GoFile.io
+      const form = new FormData();
+      form.append("file", pdfBuffer, {
+        filename: `memo_${Date.now()}.pdf`,
+        contentType: "application/pdf",
+      });
 
-        // Return uploaded file URL to client
-        res.json({ pdfUrl: uploadResponse.data });
-      } catch (uploadError) {
-        console.error("Upload failed:", uploadError.response?.data || uploadError.message);
-        res.status(500).json({ error: "Upload failed" });
+      try {
+        const uploadRes = await axios.post("https://api.gofile.io/uploadFile", form, {
+          headers: form.getHeaders(),
+        });
+
+        if (uploadRes.data.status !== "ok") {
+          return res.status(500).json({ error: "Failed to upload PDF to GoFile" });
+        }
+
+        const pdfUrl = uploadRes.data.data.downloadPage;
+        return res.json({ pdfUrl });
+      } catch (uploadErr) {
+        console.error("Upload error:", uploadErr.message || uploadErr);
+        return res.status(500).json({ error: "Failed to upload PDF" });
       }
     });
 
@@ -83,12 +100,14 @@ app.get("/api/memo", async (req, res) => {
 
     doc.text("----------------------------------------");
     doc.text(`Total: ${grandTotal.toFixed(2)}`, { align: "right" });
+    doc.text(`Paid: ${parseFloat(paidParam).toFixed(2)}`, { align: "right" });
+    doc.text(`Due: ${(grandTotal - parseFloat(paidParam)).toFixed(2)}`, { align: "right" });
     doc.moveDown();
     doc.fontSize(14).text("Thanks for shopping!", { align: "center" });
 
     doc.end();
-  } catch (error) {
-    console.error(error);
+  } catch (err) {
+    console.error("Server error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
