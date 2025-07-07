@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Invoice Generator</title>
+  <style>
+    body { max-width: 600px; margin: 20px auto; font-family: Arial, sans-serif; }
+    .product-row { margin-bottom: 10px; }
+    input { padding: 5px; margin-right: 5px; }
+    button { padding: 7px 12px; margin-top: 10px; }
+    #products-container { margin-bottom: 20px; }
+    #pdf-section { margin-top: 20px; }
+    iframe { width: 100%; height: 400px; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h2>Invoice Generator</h2>
+
+  <div id="products-container"></div>
+  <button id="add-product">Add Product</button>
+
+  <div style="margin-top: 15px;">
+    <label>
+      Paid Amount:
+      <input type="number" id="paid" value="0" min="0" />
+    </label>
+  </div>
+
+  <button id="generate-invoice">Generate Invoice PDF</button>
+
+  <div id="pdf-section" style="display:none;">
+    <h3>Invoice PDF:</h3>
+    <iframe id="pdf-viewer"></iframe>
+    <br />
+    <button id="download-pdf">Download PDF</button>
+    <button id="print-pdf">Print PDF</button>
+  </div>
+
+  <script>
+    const productsContainer = document.getElementById("products-container");
+    const addProductBtn = document.getElementById("add-product");
+    const generateBtn = document.getElementById("generate-invoice");
+    const pdfSection = document.getElementById("pdf-section");
+    const pdfViewer = document.getElementById("pdf-viewer");
+    const downloadBtn = document.getElementById("download-pdf");
+    const printBtn = document.getElementById("print-pdf");
+
+    function createProductRow(name = "", qty = 1, price = 0) {
+      const div = document.createElement("div");
+      div.className = "product-row";
+
+      div.innerHTML = `
+        <input type="text" placeholder="Product Name" class="prod-name" value="${name}" />
+        <input type="number" placeholder="Quantity" class="prod-qty" min="1" value="${qty}" />
+        <input type="number" placeholder="Price" class="prod-price" min="0" step="0.01" value="${price}" />
+        <span>Total: <span class="prod-total">0.00</span></span>
+        <button class="remove-btn">Remove</button>
+      `;
+
+      div.querySelector(".remove-btn").onclick = () => {
+        div.remove();
+        updateTotals();
+      };
+
+      const qtyInput = div.querySelector(".prod-qty");
+      const priceInput = div.querySelector(".prod-price");
+
+      function updateTotal() {
+        const qtyVal = parseFloat(qtyInput.value) || 0;
+        const priceVal = parseFloat(priceInput.value) || 0;
+        const totalVal = (qtyVal * priceVal).toFixed(2);
+        div.querySelector(".prod-total").textContent = totalVal;
+        updateTotals();
+      }
+
+      qtyInput.addEventListener("input", updateTotal);
+      priceInput.addEventListener("input", updateTotal);
+
+      updateTotal();
+
+      return div;
+    }
+
+    function updateTotals() {
+      // If you want, calculate grand total here
+    }
+
+    addProductBtn.onclick = () => {
+      const row = createProductRow();
+      productsContainer.appendChild(row);
+    };
+
+    // Start with one product row
+    addProductBtn.click();
+
+    generateBtn.onclick = async () => {
+      const rows = [...productsContainer.querySelectorAll(".product-row")];
+      const items = [];
+
+      for (const row of rows) {
+        const name = row.querySelector(".prod-name").value.trim();
+        const qty = row.querySelector(".prod-qty").value.trim();
+        const price = row.querySelector(".prod-price").value.trim();
+
+        if (!name || !qty || !price) {
+          alert("Please fill all product fields");
+          return;
+        }
+
+        items.push(`${name}:${qty}:${price}`);
+      }
+
+      const paidVal = parseFloat(document.getElementById("paid").value);
+      if (isNaN(paidVal) || paidVal < 0) {
+        alert("Please enter a valid paid amount");
+        return;
+      }
+
+      const itemsParam = encodeURIComponent(items.join(","));
+      const paidParam = paidVal;
+
+      const apiUrl = `/api/generate-memo?items=${itemsParam}&paid=${paidParam}`;
+
+      try {
+        const res = await fetch(apiUrl);
+        const data = await res.json();
+
+        if (data.pdfUrl) {
+          pdfSection.style.display = "block";
+          pdfViewer.src = data.pdfUrl;
+
+          downloadBtn.onclick = () => {
+            const a = document.createElement("a");
+            a.href = data.pdfUrl;
+            a.download = "invoice.pdf";
+            a.click();
+          };
+
+          printBtn.onclick = () => {
+            const iframeWindow = pdfViewer.contentWindow;
+            if (iframeWindow) {
+              iframeWindow.focus();
+              iframeWindow.print();
+            }
+          };
+        } else {
+          alert("Failed to generate PDF");
+        }
+      } catch (err) {
+        alert("Error generating PDF");
+        console.error(err);
+      }
+    };
+  </script>
+</body>
+</html>
